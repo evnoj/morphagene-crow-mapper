@@ -157,6 +157,12 @@ local conditions = {
     {note=84, direction=falling},
 }
 
+function chuck_run(script, adc, rate)
+    local s =  io.popen("echo '"..script.."' | chuck --adc:"..adc.." --srate:"..rate.." /dev/stdin"):read()
+    local freq,note,dir,sig = string.match(s, "(.+),(.+),(.+),(.+)")
+    return tonumber(freq),tonumber(note),dir,sig
+end
+
 -- INIT
 
 local chuck_adcs = io.popen("chuck --probe", "r")
@@ -174,6 +180,9 @@ if not srate then
     srate = 48000
 end
 
-function chuck_run(script, adc, rate)
-    return io.popen("echo '"..script.."' | chuck --adc:"..adc.." --srate:"..rate.." /dev/stdin"):read()
+local cv = 0
+
+for _,cond in ipairs(conditions) do
+    -- check condition
+    local freq,note,dir,sig = chuck_run(chuck_script, adc_index, srate)
 end
