@@ -17,7 +17,7 @@ A Lua script to map voltage values to [Morphagene](https://www.makenoisemusic.co
   - If not using output 1, be sure to change `crow_output` at the top of the script
 7. Get the output of morphagene into your audio interface, and ensure that the interface is sending only the signal from Morphagene to your computer (i.e. other inputs are muted or unplugged).
 8. Run the script like `lua morphagene-crow-mapper.lua`
-  - The script takes ~20 minutes to run. While the script is running, don't plug or unplug audio devices into your computer.
+  - The script takes a bit over an hour to run. While the script is running, don't plug or unplug audio devices into your computer.
   - There are some errors that can occur while the script is running, and if so, it either prompts for input or drops into an interactive debugger so that you can resolve the issue. The debugger is [debugger.lua](https://codeberg.org/slembcke/debugger.lua), enter `h` at the debugger for a list of commands, you'll probably want to also use:
     - `t` to view the stack trace and what frame you're in
     - `u` and `d` to move up/down frames

@@ -1,12 +1,11 @@
 local dbg = require("debugger")
 
 -- CONFIGURATION VARIABLES
--- the midi notes to find CV for, negative means reverse playback, 0 means stopped
--- I couldn't get pitch detection to work with chuck for midi note less than ~35
-local notes = {-84, -83, -82, -81, -80, -79, -78, -77, -76, -75, -74, -73, -72, -71, -70, -69, -68, -67, -66, -65, -64, -63, -62, -61, -60, -59, -58, -57, -56, -55, -54, -53, -52, -51, -50, -49, -48, -47, -46, -45, -44, -43, -42, -41, -40, -39, -38, -37, 0, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84}
-
 -- the crow output
 local crow_output = 1
+-- the pitch tolerance when finding a CV that generates a pitch
+-- I don't think morphagene is precise enough to go smaller than this
+local tolerance = 0.02 -- 2 cents
 
 -- UTILITIES
 function sign(n)
@@ -21,7 +20,7 @@ end
 
 -- IO FUNCTIONS
 function set_cv(v)
-    os.execute("druid exec 'output["..crow_output.."].volts = "..v.."'")
+    os.execute("druid exec 'output["..crow_output.."].volts = "..v.."' > /dev/null")
 end
 
 -- chuck script that analyzes frequency (as midi note #) and "direction" of the saw wave
@@ -89,6 +88,23 @@ function chuck_run(adc, rate)
     return tonumber(note)
 end
 
+function measure_note()
+    -- if adcs/dacs are added/removed while script runs (which can happen by accident w/ bluetooth or dumb macOS stuff) then this can fail, in which case user must set adc again
+    local note_measured = nil
+    while true do
+        note_measured = chuck_run(adc_index, srate)
+
+        if not note_measured then
+            print("error while running chuck script, set adc index again")
+            chuck_adc_setup()
+        else
+            break
+        end
+    end
+
+    return note_measured
+end
+
 -- use this to check what the chuck script is returning while in the debugger
 function chuck_check()
     print(io.popen("echo '"..chuck_script.."' | chuck --adc:"..adc_index.." --srate:"..srate.." /dev/stdin"):read())
@@ -112,48 +128,90 @@ function chuck_adc_setup()
     end
 end
 
+-- given a CV that is passing for the target note, finds the high and low that pass
+function find_center(note_target, starting_cv)
+    step_size = 0.001
+    local cv = starting_cv
+
+    while(true) do
+        cv = cv + step_size
+        set_cv(cv)
+        local note_measured = measure_note()
+        local err = note_target - note_measured
+        if math.abs(err) >= tolerance then
+            break
+        end
+    end
+    local cv_high = cv - step_size
+
+    cv = starting_cv
+    while(true) do
+        cv = cv - step_size
+        set_cv(cv)
+        local note_measured = measure_note()
+        local err = note_target - note_measured
+        if math.abs(err) >= tolerance then
+            break
+        end
+    end
+    local cv_low = cv + step_size
+
+    return cv_high,cv_low
+end
+
 -- INIT
+-- the midi notes to find CV for, negative means reverse playback, 0 means stopped
+-- I couldn't get pitch detection to work with chuck for midi note less than ~35
+local notes = {-84, -83, -82, -81, -80, -79, -78, -77, -76, -75, -74, -73, -72, -71, -70, -69, -68, -67, -66, -65, -64, -63, -62, -61, -60, -59, -58, -57, -56, -55, -54, -53, -52, -51, -50, -49, -48, -47, -46, -45, -44, -43, -42, -41, -40, -39, -38, -37, 0, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84}
 local note_cv_map = {}
 
 chuck_adc_setup()
 
 local pass_threshold = 3
 local step_threshold = 20
-local tolerance = 0.02 -- 2 cents
+local weird_fail_threshold = 5
+local weird_fail_markers ={[1500]=1, [-1500]=1, [666]=1}
 
+-- limits are known
+table.insert(note_cv_map, {note=-84, cv=0})
 cv = 0
 
-for i,note_target in ipairs(notes) do
+for i=2,#notes - 1 do
+    note_target = notes[i]
+
     local step_direction = 1
     local steps = 0
     local passes = 0
     local step_size = 0.02
+    local weird_fails = 0
 
     ::check_note::
     set_cv(cv)
+    local note_measured = measure_note()
 
-    -- if adcs/dacs are added/removed while script runs (which can happen by accident w/ bluetooth or dumb macOS stuff) then this can fail, in which case user must set adc again
-    local note_measured = nil
-    while true do
-        note_measured = chuck_run(adc_index, srate)
-
-        if not note_measured then
-            print("error while running chuck script, set adc index again")
-            chuck_adc_setup()
-        else
-            break
+    if weird_fail_markers[note_measured] then
+        weird_fails = weird_fails + 1
+        if weird_fails > weird_fail_threshold then
+            print("passed weird fail threshold, entering debugger")
+            dbg()
+            weird_fails = 0
         end
+        goto check_note
     end
 
     local err = note_target - note_measured
 
     if math.abs(err) < tolerance then -- pass
         passes = passes + 1
-        print("condition "..i.." pass count "..passes)
+        print("note "..note_target.." pass count "..passes)
 
         if passes == pass_threshold then
-            print('passed '..i)
-            table.insert(note_cv_map, {note = note_target, cv= cv})
+            print("passed "..note_target..", finding center")
+            local cv_high,cv_low = find_center(note_target, cv)
+            local center_cv = (cv_high + cv_low) / 2
+            print("found center cv of "..center_cv.." for note "..note_target)
+
+            table.insert(note_cv_map, {note=note_target, cv=center_cv})
         else -- check again
             goto check_note
         end
@@ -173,11 +231,15 @@ for i,note_target in ipairs(notes) do
             print("steps exceeded threshold on note "..note_target)
             print("entering debugger, please set cv manually then continue")
             dbg()
+            steps = 0
+            step_direction = 1
+            weird_fails = 0
         end
 
         goto check_note
     end
 end
+table.insert(note_cv_map, {note=84, cv=6.66})
 
 -- save the table
 local indent, eol = "    ", "\n"
@@ -187,10 +249,34 @@ if err then
     dbg()
 end
 
-file:write("{"..eol)
+file:write("return {"..eol)
 
+local idx = math.floor(#notes / 2) * -1
 for _,t in ipairs(note_cv_map) do
-    file:write(indent.."["..t.note.."]="..t.cv..","..eol)
+    file:write(indent.."["..idx.."]="..t.cv..",")
+
+    if idx == -48 then
+        file:write(" -- +1 octave reverse")
+    elseif idx == -36 then
+        file:write(" -- 1x playback reverse")
+    elseif idx == -24 then
+        file:write(" -- -1 octave reverse")
+    elseif idx == -12 then
+        file:write(" -- -2 octaves reverse")
+    elseif idx == 0 then
+        file:write(" -- stopped")
+    elseif idx == 12 then
+        file:write(" -- -2 octaves")
+    elseif idx == 24 then
+        file:write(" -- -1 octave")
+    elseif idx == 36 then
+        file:write(" -- 1x playback")
+    elseif idx == 48 then
+        file:write(" -- +1 octave")
+    end
+
+    file:write(eol)
+    idx = idx + 1
 end
 
 file:write("}"..eol)
