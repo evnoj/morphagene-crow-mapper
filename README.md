@@ -3,6 +3,7 @@ A Lua script to map voltage values to [Morphagene](https://www.makenoisemusic.co
 > to use this script with a different CV output module, change the `set_cv()` function in the script
 
 # dependencies
+- [Lua](https://www.lua.org/)
 - [ChucK](https://chuck.stanford.edu/release/)
     - the `chuck` command must be available on your `PATH`
     - the default ChucK plugins ("chugins") must be installed, these are installed with the ChucK download linked above but does not come with all ChucK installations, ex. homebrew has a ChucK formula but does not come with the chugins
